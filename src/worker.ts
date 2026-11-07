@@ -99,6 +99,40 @@ export function toSnapshot(raw: unknown, at: number): OfficeSnapshot {
   return { at, floors: out, error: null }
 }
 
+function switchTerminal(paneKey: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      cliPath(),
+      ['terminal', 'list', '--json'],
+      { timeout: CLI_TIMEOUT_MS },
+      (error, stdout) => {
+        if (error || !stdout) return resolve(false)
+        try {
+          const data = JSON.parse(stdout)
+          const terminals = (data as { result?: { terminals?: Row[] } })?.result?.terminals
+          if (Array.isArray(terminals)) {
+            const match = terminals.find((t) => {
+              const tabId = String(t.tabId ?? '')
+              const leafId = String(t.leafId ?? '')
+              const key = `${tabId}:${leafId}`
+              return key === paneKey || tabId === paneKey || leafId === paneKey
+            })
+            if (match && match.handle) {
+              execFile(cliPath(), ['terminal', 'switch', '--terminal', String(match.handle)], (switchErr) => {
+                resolve(!switchErr)
+              })
+              return
+            }
+          }
+          resolve(false)
+        } catch {
+          resolve(false)
+        }
+      }
+    )
+  })
+}
+
 export default function activate(orca: OrcaWorkerApi): void {
   let last: OfficeSnapshot = { at: 0, floors: [], error: null }
   orca.panels.handle('office.snapshot', async () => {
@@ -110,5 +144,11 @@ export default function activate(orca: OrcaWorkerApi): void {
       last = { ...last, error: message }
     }
     return last
+  })
+  orca.panels.handle('office.switch', async (input: unknown) => {
+    const paneKey = (input as { paneKey?: string })?.paneKey
+    if (!paneKey) return { ok: false }
+    const ok = await switchTerminal(paneKey)
+    return { ok }
   })
 }

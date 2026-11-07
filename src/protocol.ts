@@ -44,5 +44,7 @@ declare module 'orca' {
   interface PluginRequests {
     /** Every workspace with its agents and their subagents, grouped by project. */
     'office.snapshot': { output: OfficeSnapshot }
+    /** Switch to the terminal tab corresponding to a staff's paneKey. */
+    'office.switch': { input: { paneKey: string }; output: { ok: boolean } }
   }
 }

@@ -127,6 +127,34 @@ function shortName(desk) {
   return desk.name.split(/[\s/]+/)[0]
 }
 
+/** Rich label for a seat: prefers ticket, issue #, clean tab name, then branch. */
+function seatLabel(seat) {
+  const staff = seat.staff
+  const desk = seat.desk
+  const name = staff?.name || ''
+
+  // 1. Ticket in tab name or desk: e.g. IT-73625
+  const ticket = name.match(/[A-Z]{2,6}-\d+/) || desk.name.match(/[A-Z]{2,6}-\d+/)
+  if (ticket) return ticket[0]
+
+  // 2. Issue in tab name: e.g. Issue #19977 or #19977
+  const issue = name.match(/(?:Issue\s*)?#(\d+)/i)
+  if (issue) return `#${issue[1]}`
+
+  // 3. Tab name clean up
+  if (name.trim()) {
+    const clean = name.replace(/^[^\w\s#]+/, '').trim()
+    const words = clean.split(/\s+/)
+    if (words[0]) {
+      if (words[0].length <= 9) return words[0]
+      return words[0].slice(0, 8) + '…'
+    }
+  }
+
+  // 4. Fallback to branch/desk name
+  return shortName(desk)
+}
+
 // ---- layout ----------------------------------------------------------------------------------
 
 /** Root worktrees, each with all its descendants, so a family shares one desk. */
@@ -1082,13 +1110,13 @@ function drawSeat(seat) {
   person(p, seat.staff, tick, walkers.has(seat.key))
 }
 
-function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left' } = {}) {
+function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left', size = 11 } = {}) {
   cssTransform()
-  ctx.font = `${weight} 12px ui-monospace, 'SF Mono', Menlo, monospace`
+  ctx.font = `${weight} ${size}px ui-monospace, 'SF Mono', Menlo, monospace`
   ctx.textBaseline = 'middle'
   ctx.textAlign = align
   ctx.fillStyle = color
-  let label = text
+  let label = String(text ?? '')
   if (ctx.measureText(label).width > maxW) {
     while (label.length > 1 && ctx.measureText(label + '...').width > maxW) label = label.slice(0, -1)
     label += '...'
@@ -1180,7 +1208,7 @@ function draw() {
   }
   for (const seat of layout.seats) {
     const color = seat.key === selected ? '#2a1f6b' : '#2a2633'
-    drawText(shortName(seat.desk), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, SEAT_W * s - 2, color, { align: 'center' })
+    drawText(seatLabel(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, (DESK_W + 2) * s, color, { align: 'center', size: 10 })
   }
 
   const pickSeat = layout.seats.find((u) => u.key === selected)
@@ -1224,6 +1252,27 @@ function renderStats() {
   document.getElementById('stats').textContent = parts.join(' · ')
 }
 
+async function requestSnapshot() {
+  if (typeof orca !== 'undefined' && orca?.plugin?.request) {
+    return await orca.plugin.request('office.snapshot', undefined, { timeoutMs: 15000 })
+  }
+  const res = await fetch('/api/snapshot')
+  return await res.json()
+}
+
+function requestSwitch(paneKey) {
+  if (!paneKey) return
+  if (typeof orca !== 'undefined' && orca?.plugin?.request) {
+    orca.plugin.request('office.switch', { paneKey }).catch(() => {})
+  } else {
+    fetch('/api/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paneKey })
+    }).catch(() => {})
+  }
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
   const seat = layout.seats.find((u) => u.key === selected)
@@ -1231,13 +1280,31 @@ function renderDetail() {
     box.hidden = true
     return
   }
-  const { desk: d, staff } = seat
-  const lines = [el('div', '', d.name)]
-  lines.push(el('div', 'row', `${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
-  if (staff.task && staff.task !== d.name) lines.push(el('div', 'row', staff.task))
-  if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `using ${staff.tool}`))
+  const { desk: d, staff, room } = seat
+  const title = staff.name ? staff.name : d.name
+  const header = el('div', 'title', title)
+  header.style.fontWeight = '700'
+  header.style.fontSize = '13px'
+  header.style.color = 'var(--orca-foreground, inherit)'
+  header.style.marginBottom = '4px'
+
+  const lines = [header]
+  lines.push(el('div', 'row', `📁 ${room.name} · 🌿 ${d.branch ?? d.name}`))
+  lines.push(el('div', 'row', `🤖 ${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
+  if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `⚡ using ${staff.tool}`))
+  if (staff.task && staff.task !== staff.name) lines.push(el('div', 'row', `📋 ${staff.task}`))
+  if (staff.said) lines.push(el('div', 'row', `💬 "${staff.said}"`))
   for (const sp of activeSpecialists(staff)) {
-    lines.push(el('div', 'row', `${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
+    lines.push(el('div', 'row', `👥 ${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
+  }
+  if (staff.id) {
+    const btn = el('button', 'switch-btn', '↗ Abrir pestaña en Orca')
+    btn.style.cssText = 'margin-top:8px;padding:4px 10px;background:var(--orca-button-background,#3a3650);color:var(--orca-button-foreground,#fff);border:1px solid var(--orca-muted,#555);border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;'
+    btn.onclick = (e) => {
+      e.stopPropagation()
+      requestSwitch(staff.id)
+    }
+    lines.push(btn)
   }
   box.replaceChildren(...lines)
   box.hidden = false
@@ -1291,10 +1358,49 @@ function onPalu(ax, ay) {
   return Boolean(dog) && overlaps(dog.box, [ax - 1, ay - 1, 2, 2])
 }
 
+// Floating hover tooltip for seats and Palú
+const tooltip = document.createElement('div')
+tooltip.id = 'seat-tooltip'
+tooltip.style.cssText = 'position:fixed;display:none;pointer-events:none;z-index:9999;padding:6px 10px;background:var(--orca-popover,#1f1c2b);color:var(--orca-popover-foreground,#eee);border:1px solid var(--orca-muted,#3d3755);border-radius:6px;font-size:11px;line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:320px;backdrop-filter:blur(8px);'
+document.body.appendChild(tooltip)
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 canvas.addEventListener('mousemove', (event) => {
   const [ax, ay] = artPoint(event)
-  const onSeat = layout.seats.some((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
-  canvas.style.cursor = onSeat || onPalu(ax, ay) ? 'pointer' : ''
+  const hit = layout.seats.find((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
+  const onDog = onPalu(ax, ay)
+  canvas.style.cursor = hit || onDog ? 'pointer' : ''
+
+  if (hit) {
+    const { desk: d, staff, room } = hit
+    const title = staff.name || d.name
+    const stateInfo = `🤖 <strong>${escapeHtml(staff.agent || 'agent')}</strong> · <span style="color:var(--orca-primary,#82aaff)">${escapeHtml(STATE_LABEL[staff.state])}</span> (${since(staff.since)})`
+    const locInfo = `📁 ${escapeHtml(room.name)} · 🌿 ${escapeHtml(d.branch || d.name)}`
+    const toolInfo = staff.tool && staff.state === 'working' ? `<br>⚡ using <code>${escapeHtml(staff.tool)}</code>` : ''
+    const saidInfo = staff.said ? `<br>💬 <em>"${escapeHtml(staff.said)}"</em>` : ''
+    const specInfo = staff.specialists?.length ? `<br>👥 ${escapeHtml(staff.specialists.map((s) => s.role).filter(Boolean).join(', '))}` : ''
+
+    tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${saidInfo}${specInfo}</div>`
+    tooltip.style.display = 'block'
+    const x = Math.min(window.innerWidth - 330, event.clientX + 14)
+    const y = Math.min(window.innerHeight - 120, event.clientY + 14)
+    tooltip.style.left = `${Math.max(10, x)}px`
+    tooltip.style.top = `${Math.max(10, y)}px`
+  } else if (onDog) {
+    tooltip.innerHTML = `<strong>Palú 🐾</strong><br><span style="color:var(--orca-muted-foreground,#9a97a8)">The office dog. Click to pet him!</span>`
+    tooltip.style.display = 'block'
+    tooltip.style.left = `${event.clientX + 14}px`
+    tooltip.style.top = `${event.clientY + 14}px`
+  } else {
+    tooltip.style.display = 'none'
+  }
+})
+
+canvas.addEventListener('mouseleave', () => {
+  tooltip.style.display = 'none'
 })
 
 canvas.addEventListener('click', (event) => {
@@ -1308,12 +1414,15 @@ canvas.addEventListener('click', (event) => {
   selected = hit && hit.key !== selected ? hit.key : null
   renderDetail()
   draw()
+  if (hit && hit.staff?.id) {
+    requestSwitch(hit.staff.id)
+  }
 })
 
 async function poll() {
   if (document.visibilityState !== 'hidden') {
     try {
-      apply(await orca.plugin.request('office.snapshot', undefined, { timeoutMs: 15000 }))
+      apply(await requestSnapshot())
     } catch (error) {
       if (layout.seats.length === 0) showMessage(`The worker did not answer: ${error?.message ?? error}`)
     }

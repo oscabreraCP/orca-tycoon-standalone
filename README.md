@@ -13,15 +13,23 @@ who needs you and who is done, without having to click through every workspace.
 
 Requires Orca 1.4.246 or newer.
 
-In Orca, open Settings, then Plugins, and install Orca Tycoon (`palulabs.office-tycoon`) from the
-plugin directory. To run it from a clone instead:
+In Orca, open **Settings → Plugins**, and install **Orca Tycoon** (`palulabs.office-tycoon`) from the plugin directory.
+
+To run it from a clone or development folder instead:
 
 ```sh
-git clone https://github.com/palulabs/orca-tycoon.git
-cd orca-tycoon
+git clone https://github.com/palulabs/orca-tycoon.git ~/projects/orca-tycoon
+# Or from fork: git clone https://github.com/oscabreraCP/orca-tycoon.git ~/projects/orca-tycoon
+cd ~/projects/orca-tycoon
 orca plugin dev load .        # prints an approval; re-run with the --approve flag it shows
 orca plugin open local.office-tycoon --panel office
 ```
+
+### Features & Improvements:
+- **Smart Desk Labels:** Shows ticket keys (`IT-XXXXX`, `#19977`) or clean tab conversation names under each desk instead of repeating generic branch names.
+- **Hover Card Tooltip:** Hovering over any desk displays a floating card with full tab name, active agent, state, duration, tool (`Bash`, etc.), repo, branch, subagents, and last message preview.
+- **Click to Switch Tab:** Clicking any desk directly focuses/switches to that terminal tab in Orca (`orca terminal switch`). Also adds an `[ ↗ Abrir pestaña en Orca ]` button in the details panel.
+- **Standalone Local Server (Optional):** Run `node server.mjs` to view Tycoon at `http://localhost:3456` or in an Orca browser tab (`orca tab create --url http://127.0.0.1:3456`).
 
 The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/bin/orca`, then
 `~/Applications/...`, then `orca` on your `PATH`.
